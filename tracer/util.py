@@ -11,9 +11,11 @@ from augheapq import AugHeapq
 def parse_trace(filename):
     lst = list()
     with open(filename, 'rb') as f:
-        while (page := f.read(8)):
+        page = f.read(8)
+        while page:
             page = struct.unpack('q', page)[0]
             lst.append(page)
+            page = f.read(8)
     return lst
 
 # Return set containing unique page addresses
