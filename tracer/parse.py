@@ -7,5 +7,9 @@ if __name__ == "__main__":
     lst = util.parse_trace(file_path)
     
     
-    print(len(lst))
-    print(Counter(lst))
+    file = open('/data/traces/python3/cleaned.txt','w')
+    for item in lst:
+        file.write(str(item)+"\n")
+    file.close()
+        
+    
