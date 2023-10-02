@@ -3,8 +3,9 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <asm/tlbflush.h>
-
+#include <linux/time.h>
 #include <linux/injections.h>
+#include <linux/ktime.h> // Required for ktime_get() and ktime_to_ns()
 
 #include "common.h"
 #include "record.h"
@@ -38,7 +39,8 @@ void record_init(struct task_struct *tsk, int flags, unsigned int microset_size)
 
 	memset(record, 0, sizeof(struct trace_recording_state));
 	record->accesses = vmalloc(TRACE_ARRAY_SIZE);
-	if (record->accesses == NULL) {
+	record->timestamps = vmalloc(TRACE_ARRAY_SIZE);
+	if (record->accesses == NULL || record->timestamps == NULL) {
 		printk(KERN_ERR "Unable to allocate memory for tracing\n");
 		return;
 	}
@@ -48,13 +50,19 @@ void record_init(struct task_struct *tsk, int flags, unsigned int microset_size)
 	atomic_set(&microset_pos, 0);
 	record->microset =
 		vmalloc(record->microset_size * sizeof(unsigned long));
-	if (record->microset == NULL) {
+	record->microset_times = vmalloc(record->microset_size * sizeof(unsigned long));
+
+	if (record->microset == NULL || record->microset_times == NULL) {
 		printk(KERN_ERR "Unable to allocate memory for tracing\n");
 		vfree(record->accesses);
+		vfree(record->timestamps);
 		record->accesses = NULL;
+		record->timestamps = NULL;
 		return;
 	}
 	memset(record->microset, 0x00,
+	       record->microset_size * sizeof(unsigned long));
+	memset(record->microset_times, 0x00,
 	       record->microset_size * sizeof(unsigned long));
 }
 
@@ -114,15 +122,19 @@ void record_fini(struct task_struct *tsk)
 		if (record->f == NULL) {
 			open_trace_file(tsk);
 		}
-		write_buffered_trace_to_file(record->f, (const char *)record->accesses,
+		write_buffered_trace_to_file(record->f, (const char *)record->accesses, (const char *)record->timestamps,
 			    record->pos * sizeof(void *));
 		close_trace(record->f);
 		record->f = NULL;
 
 		vfree(record->microset);
+		vfree(record->microset_times);
 		vfree(record->accesses);
+		vfree(record->timestamps);
+
 		// make sure next call to record_initialized() will return false;
 		record->accesses = NULL;
+		record->timestamps = NULL;
 	}
 }
 
@@ -170,7 +182,7 @@ static void drain_microset()
 		if (unlikely(record->f == NULL)) {
 			open_trace_file(current);
 		}
-		write_buffered_trace_to_file(record->f, (const char *)record->accesses,
+		write_buffered_trace_to_file(record->f, (const char *)record->accesses, (const char *)record->timestamps,
 			    record->pos * sizeof(void *));
 		record->pos = 0;
 	}
@@ -183,7 +195,7 @@ static void drain_microset()
 	     i++) {
 		// microset already records pages with 12 bit in-page offset cleared
 		record->accesses[record->pos++] = record->microset[i];
-
+		record->timestamps[record->pos++] = record->microset_times[i];
 		trace_clear_pte(addr2pte(record->microset[i], current->mm));
 	}
 	record->microset_pos = 0;
@@ -246,8 +258,13 @@ void record_page_fault_handler(struct pt_regs *regs, unsigned long error_code,
 	}
 
 	BUG_ON(record->microset_pos >= record->microset_size);
+
 	record->microset[record->microset_pos] =
 		address & PAGE_ADDR_MASK;
+
+    ktime_t time_ns = ktime_get();
+	record->microset_times[record->microset_pos] = (unsigned long) ktime_to_ns(time_ns);
+	
 	if (memtrace_getflag(ONE_TAPE))
 		atomic_inc(&microset_pos);
 	else

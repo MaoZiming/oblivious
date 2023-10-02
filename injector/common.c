@@ -189,9 +189,9 @@ void close_trace(struct file *f)
 	set_fs(old_fs);
 }
 
-void write_buffered_trace_to_file(struct file *f, const char *buf, long len)
+void write_buffered_trace_to_file(struct file *f, const char *buf, const char *buf_time, long len)
 {
-	long left_to_write = len;
+	long left_to_write = len * 2;
 
 	mm_segment_t old_fs = get_fs();
 	set_fs(get_ds()); // KERNEL_DS
@@ -203,6 +203,22 @@ void write_buffered_trace_to_file(struct file *f, const char *buf, long len)
 		// cannot write more than 2g at a time from kernel
 		// fixed in newer kernels, I guess just upgrade?
 		ssize_t count = kernel_write(f, buf, left_to_write, f->f_pos);
+
+		//size_t can not be smaller than zero
+		if (count < 0) {
+			printk(KERN_ERR "Failed writing. "
+					"errno=%ld, left to "
+					"write %ld\n",
+			       count, left_to_write);
+			break;
+		}
+
+		f->f_pos += count;
+		left_to_write -= count;
+		buf += count;
+
+		// fixed in newer kernels, I guess just upgrade?
+		count = kernel_write(f, buf_time, left_to_write, f->f_pos);
 
 		//size_t can not be smaller than zero
 		if (count < 0) {
