@@ -177,6 +177,7 @@ static void drain_microset()
 {
 	struct trace_recording_state *record = &current->obl.record;
 	unsigned long i;
+	unsigned long pos;
 
 	if (unlikely(record->pos + record->microset_size > TRACE_MAX_LEN)) {
 		if (unlikely(record->f == NULL)) {
@@ -194,8 +195,14 @@ static void drain_microset()
 	for (i = 0; i != record->microset_pos && record->pos < TRACE_MAX_LEN;
 	     i++) {
 		// microset already records pages with 12 bit in-page offset cleared
-		record->accesses[record->pos++] = record->microset[i];
-		record->timestamps[record->pos++] = record->microset_times[i];
+		pos = record->pos;
+		record->accesses[pos] = record->microset[i];
+
+		// if (i == 1) {
+		// 	printk("microset_times: %llu - %llu\n", record->microset_times[i], record->microset_times[0]);
+		// }
+		record->timestamps[pos] = (unsigned long) (record->microset_times[i]);
+		record->pos ++;
 		trace_clear_pte(addr2pte(record->microset[i], current->mm));
 	}
 	record->microset_pos = 0;
@@ -262,8 +269,11 @@ void record_page_fault_handler(struct pt_regs *regs, unsigned long error_code,
 	record->microset[record->microset_pos] =
 		address & PAGE_ADDR_MASK;
 
-    ktime_t time_ns = ktime_get();
-	record->microset_times[record->microset_pos] = (unsigned long) ktime_to_ns(time_ns);
+    // time_ns = ktime_get();
+	if (record->microset_times[0] == 0) {
+		printk("ktime_get_ns: %llu\n", ktime_to_ns(ktime_get()));
+	}
+	record->microset_times[record->microset_pos] = ktime_get_ns();
 	
 	if (memtrace_getflag(ONE_TAPE))
 		atomic_inc(&microset_pos);

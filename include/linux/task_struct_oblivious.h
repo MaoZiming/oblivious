@@ -61,7 +61,7 @@ struct trace_recording_state {
 	unsigned long microset_size;
 	unsigned long microset_pos;
 	unsigned long *microset;
-	unsigned long *microset_times;
+	unsigned long long *microset_times;
 };
 
 struct prefetching_state {
