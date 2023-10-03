@@ -4,7 +4,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 
-#include <linux/injections.h>
 #include <linux/vmalloc.h>
 #include <linux/frontswap.h>
 #include <linux/pagemap.h>
@@ -14,6 +13,7 @@
 #include "mem_pattern_trace.h"
 #include "common.h"
 #include "record.h"
+#include "injections.h"
 
 MODULE_AUTHOR("");
 MODULE_LICENSE("GPL");
@@ -51,7 +51,7 @@ void mem_pattern_trace_start(int flags)
 
 static void mem_pattern_trace_end(int flags)
 {
-	current->obl.flags = 0;
+	pid_to_obl[current->pid].flags = 0;
 	// all _fini functions check whether they have been initialized
 	// before performing any free-ing so no need to do it here
 	record_fini(current);
@@ -67,12 +67,12 @@ static void copy_process_40(struct task_struct *p, unsigned long clone_flags,
 	 * p->group_leader is the thread that first
 	 * called mem_pattern_trace syscall in a multithreaded process
 	 */
-	if (!(p->group_leader->obl.flags & OBLIVIOUS_TAG))
+	if (!(pid_to_obl[p->group_leader->pid].flags & OBLIVIOUS_TAG))
 		return;
 
-	memset(&p->obl, 0, sizeof(struct task_struct_oblivious));
+	memset(&pid_to_obl[p->pid], 0, sizeof(struct task_struct_oblivious));
 
-	if (current->obl.flags & TRACE_RECORD)
+	if (pid_to_obl[current->pid].flags & TRACE_RECORD)
 		record_clone(p, clone_flags);
 }
 
@@ -85,14 +85,14 @@ static void do_page_fault_2(struct pt_regs *regs, unsigned long error_code,
 	 * We really care about perormance in FETCH branch, hence the `likely`
 	 * tracing is quite slow so branch misprediction here will not hurt much?
 	 * */
-	if (current->obl.flags & TRACE_RECORD)
+	if (pid_to_obl[current->pid].flags & TRACE_RECORD)
 		record_page_fault_handler(regs, error_code, address, tsk,
 					  return_early, magic);
 }
 
-static void do_exit_41()
+static void do_exit_41(void)
 {
-	if (!(current->obl.flags & OBLIVIOUS_TAG))
+	if (!(pid_to_obl[current->pid].flags & OBLIVIOUS_TAG))
 		return;
 	mem_pattern_trace_end(0);
 }
@@ -155,40 +155,7 @@ static void mem_pattern_trace_3(int flags)
 	}
 }
 
-static void print_memtrace_flags()
-{
-	printk(KERN_INFO "memtrace global flags:\n"
-			 "%-30s %d (%s)\n"
-			 "%-30s %s (%s)\n"
-			 "\n"
 
-			 "%-30s %s (%s)\n"
-			 "%-30s %s (%s)\n"
-			 "%-30s %s (%s)\n"
-			 "\n"
-			 "%-30s %s (%s)\n"
-			 "%-30s %s (%s)\n"
-			 "%-30s %s (%s)\n"
-			 "%-30s %s (%s)\n"
-			 "\n"
-			 "%-30s %s (%s)\n",
-	       // clang-format off
-		"Microset size", us_size, "us_size",
-		"Single tape in multicore", memtrace_getflag(ONE_TAPE) ? "ON" : "OFF", "one_tape",
-
-		"Fastswap", static_branch_unlikely(&frontswap_enabled_key) ? "ON" : "OFF", "fastswap",
-		"Tape operations", memtrace_getflag(TAPE_OPS) ? "ON" : "OFF", "tape_ops",
-		"Swap SSD Optim",  memtrace_getflag(SWAP_SSD_OPTIMIZATION) ? "ON" : "OFF", "ssdopt",
-
-		"Fastswap writes",  memtrace_getflag(FASTSWAP_ASYNCWRITES) ? "ASYNC" : "SYNC", "async_writes",
-		"Enable tape fetch",  memtrace_getflag(TAPE_FETCH) ? "ON" : "OFF", "tape_fetch",
-		"Offload prefetching",  memtrace_getflag(OFFLOAD_FETCH) ? "ON" : "OFF", "offload_fetch",
-		"Mark unevictable",  memtrace_getflag(MARK_UNEVICTABLE) ? "ON" : "OFF", "unevictable",
-
-		"print LRU dmesg logs",  memtrace_getflag(LRU_LOGS) ? "ON" : "OFF", "lru_logs"
-	       // clang-format on
-	       );
-}
 
 static void usage(void)
 {
@@ -198,23 +165,32 @@ static void usage(void)
 			 "parentheses below)");
 	printk(KERN_INFO "and $val is the value for commend (usualy 0 or 1) if "
 			 "it requires a value\n");
-	print_memtrace_flags();
 }
 
 static int __init mem_pattern_trace_init(void)
 {
-	set_pointer(3, mem_pattern_trace_3);
+	// set_pointer(3, mem_pattern_trace_3);
+	pointers[3] = (injected_func_type) mem_pattern_trace_3;
 
-	set_pointer(5, do_unmap_5);
-	set_pointer(6, do_unmap_5); //<-- for handle_pte_fault
-	set_pointer(2, do_page_fault_2);
+	// set_pointer(5, do_unmap_5);
+	pointers[5] = (injected_func_type) do_unmap_5;
+	// set_pointer(6, do_unmap_5); //<-- for handle_pte_fault
+	pointers[6] = (injected_func_type) do_unmap_5;
 
-	set_pointer(40, copy_process_40);
-	set_pointer(41, do_exit_41);
+	// set_pointer(2, do_page_fault_2);
+	pointers[2] = (injected_func_type) do_page_fault_2;
+
+	// set_pointer(40, copy_process_40);
+	pointers[40] = (injected_func_type) copy_process_40;
+
+	// set_pointer(41, do_exit_41);
+	pointers[41] = (injected_func_type) do_exit_41;
 
 	// assuming the application has no unevictable pages so if we an
 	// unevictable-barked page, we remove the marking
-	set_pointer(50, do_swap_page_50);
+	// set_pointer(50, do_swap_page_50);
+	pointers[50] = (injected_func_type) do_swap_page_50;
+
 	if (!cmd) {
 		usage();
 		return -1;
@@ -264,7 +240,6 @@ static int __init mem_pattern_trace_init(void)
 		usage();
 		return 0;
 	}
-	print_memtrace_flags();
 
 	// sanity checks
 	if (!memtrace_getflag(TAPE_OPS) && memtrace_getflag(TAPE_FETCH)) {
@@ -287,7 +262,8 @@ static void __exit mem_pattern_trace_exit(void)
 
 	printk(KERN_DEBUG "resetting injection points to noop");
 	for (i = 0; i < 100; i++)
-		set_pointer(i, kernel_noop);
+		// set_pointer(i, kernel_noop);
+		pointers[i] = (injected_func_type) kernel_noop;
 }
 
 module_init(mem_pattern_trace_init);

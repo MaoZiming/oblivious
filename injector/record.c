@@ -4,11 +4,11 @@
 #include <linux/vmalloc.h>
 #include <asm/tlbflush.h>
 #include <linux/time.h>
-#include <linux/injections.h>
 #include <linux/ktime.h> // Required for ktime_get() and ktime_to_ns()
 
 #include "common.h"
 #include "record.h"
+#include "injections.h"
 #include "mem_pattern_trace.h"
 
 #include <linux/kallsyms.h>
@@ -28,14 +28,14 @@ static unsigned long global_pos;
 
 void record_init(struct task_struct *tsk, int flags, unsigned int microset_size)
 {
-	struct trace_recording_state *record = &tsk->obl.record;
+	struct trace_recording_state *record = &pid_to_obl[tsk->pid].record;
 
 	flush_tlb_all_p = (void *)kallsyms_lookup_name("flush_tlb_all");
 
 	BUG_ON(record_initialized(tsk));
 
-	tsk->obl.tind = atomic_inc_return(&num_active_threads) - 1;
-	tsk->obl.flags = flags;
+	pid_to_obl[tsk->pid].tind = atomic_inc_return(&num_active_threads) - 1;
+	pid_to_obl[tsk->pid].flags = flags;
 
 	memset(record, 0, sizeof(struct trace_recording_state));
 	record->accesses = vmalloc(TRACE_ARRAY_SIZE);
@@ -66,16 +66,16 @@ void record_init(struct task_struct *tsk, int flags, unsigned int microset_size)
 	       record->microset_size * sizeof(unsigned long));
 }
 
-static void drain_microset();
+static void drain_microset(void);
 
 static void open_trace_file(struct task_struct *tsk) {
-	struct trace_recording_state *record = &tsk->obl.record;
+	struct trace_recording_state *record = &pid_to_obl[tsk->pid].record;
 	char trace_filepath[FILEPATH_LEN];
 
 	BUG_ON(record->f != NULL);
 
 	snprintf(trace_filepath, FILEPATH_LEN, RECORD_FILE_FMT,
-			 tsk->comm, tsk->obl.tind);
+			 tsk->comm, pid_to_obl[tsk->pid].tind);
 
 	trace_filepath[FILEPATH_LEN - 1] = '\0';
 	record->f = open_trace(trace_filepath);
@@ -83,26 +83,26 @@ static void open_trace_file(struct task_struct *tsk) {
 
 bool record_initialized(struct task_struct *tsk)
 {
-	return tsk->obl.record.accesses != NULL;
+	return pid_to_obl[tsk->pid].record.accesses != NULL;
 }
 
 void record_clone(struct task_struct *p, unsigned long clone_flags)
 {
 	if (memtrace_getflag(ONE_TAPE)) {
 		atomic_inc(&num_active_threads);
-		p->obl = current->obl;
+		pid_to_obl[p->pid] = pid_to_obl[current->pid];
 	} else
-		record_init(p, current->obl.flags,
-			    current->obl.record.microset_size);
+		record_init(p, pid_to_obl[current->pid].flags,
+			    pid_to_obl[current->pid].record.microset_size);
 }
 
 void record_fini(struct task_struct *tsk)
 {
-	struct trace_recording_state *record = &tsk->obl.record;
+	struct trace_recording_state *record = &pid_to_obl[tsk->pid].record;
 
 	if (record_initialized(tsk)) {
 		int num_threads_left = atomic_dec_return(&num_active_threads);
-		printk(KERN_INFO "finishing %d", tsk->obl.tind);
+		printk(KERN_INFO "finishing %d", pid_to_obl[tsk->pid].tind);
 		if (memtrace_getflag(ONE_TAPE)) {
 			if (num_threads_left != 0)
 				return;
@@ -175,7 +175,7 @@ static void trace_clear_pte(pte_t *pte)
 
 static void drain_microset()
 {
-	struct trace_recording_state *record = &current->obl.record;
+	struct trace_recording_state *record = &pid_to_obl[current->pid].record;
 	unsigned long i;
 	unsigned long pos;
 
@@ -214,7 +214,7 @@ void record_page_fault_handler(struct pt_regs *regs, unsigned long error_code,
 			       unsigned long address, struct task_struct *tsk,
 			       bool *return_early, int magic)
 {
-	struct trace_recording_state *record = &current->obl.record;
+	struct trace_recording_state *record = &pid_to_obl[current->pid].record;
 	struct vm_area_struct *maybe_stack;
 
 	BUG_ON(tsk != current);

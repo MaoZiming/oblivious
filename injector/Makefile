@@ -3,6 +3,7 @@ obj-m += mem_pattern_trace.o
 mem_pattern_trace-objs := common.o
 mem_pattern_trace-objs += record.o
 mem_pattern_trace-objs += module_entry.o
+mem_pattern_trace-objs += injections.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules

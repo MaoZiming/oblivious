@@ -16,13 +16,10 @@ const unsigned long PAGE_ADDR_MASK = ~0xfff;
 const unsigned long PRESENT_BIT_MASK = 1UL;
 const unsigned long SPECIAL_BIT_MASK = 1UL << 58;
 
-#ifdef DEBUG_FS
-struct dentry *debugfs_root;
-#endif
-
 pte_t *addr2pte(unsigned long addr, struct mm_struct *mm)
 {
 	pgd_t *pgd;
+	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte = NULL;
@@ -33,7 +30,12 @@ pte_t *addr2pte(unsigned long addr, struct mm_struct *mm)
 	pgd = pgd_offset(mm, addr);
 	if (unlikely(pgd_none(*pgd) || pgd_bad(*pgd)))
 		return pte;
-	pud = pud_offset(pgd, addr);
+
+	p4d = p4d_offset(pgd, addr);
+	if (unlikely(p4d_none(*p4d) || p4d_bad(*p4d)))
+		return pte;
+
+	pud = pud_offset(p4d, addr);
 	if (unlikely(pud_none(*pud) || pud_bad(*pud)))
 		return pte;
 	pmd = pmd_offset(pud, addr);
@@ -62,8 +64,8 @@ struct file *open_trace(const char *filepath)
 {
 	struct file *f;
 
-	mm_segment_t old_fs = get_fs();
-	set_fs(get_ds()); // KERNEL_DS
+	// mm_segment_t old_fs = get_fs();
+	// set_fs(get_ds()); // KERNEL_DS
 
 	// todo::mkdir before open
 	f = filp_open(filepath, O_CREAT | O_WRONLY | O_LARGEFILE, 0644);
@@ -74,18 +76,18 @@ struct file *open_trace(const char *filepath)
 		f = NULL;
 	}
 
-	set_fs(old_fs);
+	// set_fs(old_fs);
 	return f;
 }
 
 void close_trace(struct file *f)
 {
-	mm_segment_t old_fs = get_fs();
-	set_fs(get_ds()); // KERNEL_DS
+	// mm_segment_t old_fs = get_fs();
+	// set_fs(get_ds()); // KERNEL_DS
 
 	filp_close(f, NULL);
 
-	set_fs(old_fs);
+	// set_fs(old_fs);
 }
 
 void write_buffered_trace_to_file(struct file *f, const char *buf, const char *buf_time, long buf_len, long buf_time_len)
@@ -93,8 +95,8 @@ void write_buffered_trace_to_file(struct file *f, const char *buf, const char *b
 	long buf_left_to_write = buf_len;
 	long buf_time_left_to_write = buf_time_len;
 
-	mm_segment_t old_fs = get_fs();
-	set_fs(get_ds()); // KERNEL_DS
+	// mm_segment_t old_fs = get_fs();
+	// set_fs(get_ds()); // KERNEL_DS
 
 	printk(KERN_DEBUG "Writing recorded trace (num accesses=%ld)",
 	       buf_len / sizeof(void *));
@@ -102,7 +104,7 @@ void write_buffered_trace_to_file(struct file *f, const char *buf, const char *b
 	while (buf_left_to_write > 0 && buf_time_left_to_write) {
 		// cannot write more than 2g at a time from kernel
 		// fixed in newer kernels, I guess just upgrade?
-		ssize_t count = kernel_write(f, buf, buf_left_to_write, f->f_pos);
+		ssize_t count = kernel_write(f, buf, buf_left_to_write, &f->f_pos);
 
 		//size_t can not be smaller than zero
 		if (count < 0) {
@@ -118,7 +120,7 @@ void write_buffered_trace_to_file(struct file *f, const char *buf, const char *b
 		buf += count;
 
 		// fixed in newer kernels, I guess just upgrade?
-		count = kernel_write(f, buf_time, buf_time_left_to_write, f->f_pos);
+		count = kernel_write(f, buf_time, buf_time_left_to_write, &f->f_pos);
 
 		//size_t can not be smaller than zero
 		if (count < 0) {
@@ -142,5 +144,5 @@ void write_buffered_trace_to_file(struct file *f, const char *buf, const char *b
 				"out of %ld total\n",
 		       buf_time_left_to_write, buf_time_len);
 	}
-	set_fs(old_fs);
+	// set_fs(old_fs);
 }
