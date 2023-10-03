@@ -123,7 +123,7 @@ void record_fini(struct task_struct *tsk)
 			open_trace_file(tsk);
 		}
 		write_buffered_trace_to_file(record->f, (const char *)record->accesses, (const char *)record->timestamps,
-			    record->pos * sizeof(void *));
+			    record->pos * sizeof(void *), record->pos * sizeof(unsigned long long));
 		close_trace(record->f);
 		record->f = NULL;
 
@@ -184,7 +184,7 @@ static void drain_microset()
 			open_trace_file(current);
 		}
 		write_buffered_trace_to_file(record->f, (const char *)record->accesses, (const char *)record->timestamps,
-			    record->pos * sizeof(void *));
+			    record->pos * sizeof(void *), record->pos * sizeof(unsigned long long));
 		record->pos = 0;
 	}
 
@@ -197,11 +197,7 @@ static void drain_microset()
 		// microset already records pages with 12 bit in-page offset cleared
 		pos = record->pos;
 		record->accesses[pos] = record->microset[i];
-
-		// if (i == 1) {
-		// 	printk("microset_times: %llu - %llu\n", record->microset_times[i], record->microset_times[0]);
-		// }
-		record->timestamps[pos] = (unsigned long) (record->microset_times[i]);
+		record->timestamps[pos] = record->microset_times[i];
 		record->pos ++;
 		trace_clear_pte(addr2pte(record->microset[i], current->mm));
 	}

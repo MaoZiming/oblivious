@@ -5,13 +5,15 @@
 #include <linux/moduleparam.h>
 
 #include <linux/injections.h>
+#include <linux/vmalloc.h>
+#include <linux/frontswap.h>
+#include <linux/pagemap.h>
+#include <linux/time.h>
+#include <linux/delay.h>
 
 #include "mem_pattern_trace.h"
 #include "common.h"
 #include "record.h"
-#include "fetch.h"
-#include "evict.h"
-#include "fastswap_bench.h"
 
 MODULE_AUTHOR("");
 MODULE_LICENSE("GPL");
@@ -29,25 +31,9 @@ module_param(us_size, int, 0000);
 void mem_pattern_trace_start(int flags)
 {
 	pid_t pid = current->pid;
-	const char *proc_name = current->comm;
 
 	// add the special tag to tell this process apart
 	flags |= OBLIVIOUS_TAG;
-	if (flags & TRACE_AUTO) {
-		if (proc_file_exists(proc_name, FETCH_FILE_FMT, 0))
-			flags |= TRACE_PREFETCH;
-		else if (!proc_file_exists(proc_name, RECORD_FILE_FMT, 0)) {
-			flags |= TRACE_RECORD;
-		} else {
-			printk(KERN_ERR
-			       "trace recoding for process with pid %d and "
-			       "name %s exists\n"
-			       "but a post processed tape does not exist\n"
-			       "Unable to AUTO_(RECORD|PREFETCH)\n",
-			       pid, proc_name);
-			return;
-		}
-	}
 
 	printk(KERN_INFO "%s%s%s for PROCESS with pid %d\n",
 	       flags & TRACE_AUTO ? "AUTO-" : "",
@@ -60,9 +46,6 @@ void mem_pattern_trace_start(int flags)
 					    "may arrise when us_size < 2\n");
 		}
 		record_init(current, flags, us_size);
-
-	} else if (flags & TRACE_PREFETCH) {
-		fetch_init(current, flags);
 	}
 }
 
@@ -71,7 +54,6 @@ static void mem_pattern_trace_end(int flags)
 	current->obl.flags = 0;
 	// all _fini functions check whether they have been initialized
 	// before performing any free-ing so no need to do it here
-	fetch_fini(current);
 	record_fini(current);
 }
 
@@ -79,7 +61,6 @@ static void copy_process_40(struct task_struct *p, unsigned long clone_flags,
 			    unsigned long stack_start, unsigned long stack_size,
 			    int __user *child_tidptr, struct pid *pid,
 			    int trace, unsigned long tls, int node)
-
 {
 	/* p is being copy-ed from current. Need to
 	 * reset obl state and create its own
@@ -90,9 +71,8 @@ static void copy_process_40(struct task_struct *p, unsigned long clone_flags,
 		return;
 
 	memset(&p->obl, 0, sizeof(struct task_struct_oblivious));
-	if (current->obl.flags & TRACE_PREFETCH)
-		fetch_clone(p, clone_flags);
-	else if (current->obl.flags & TRACE_RECORD)
+
+	if (current->obl.flags & TRACE_RECORD)
 		record_clone(p, clone_flags);
 }
 
@@ -105,10 +85,7 @@ static void do_page_fault_2(struct pt_regs *regs, unsigned long error_code,
 	 * We really care about perormance in FETCH branch, hence the `likely`
 	 * tracing is quite slow so branch misprediction here will not hurt much?
 	 * */
-	if (likely(current->obl.flags & TRACE_PREFETCH))
-		fetch_page_fault_handler(regs, error_code, address, tsk,
-					 return_early, magic);
-	else if (current->obl.flags & TRACE_RECORD)
+	if (current->obl.flags & TRACE_RECORD)
 		record_page_fault_handler(regs, error_code, address, tsk,
 					  return_early, magic);
 }
@@ -128,11 +105,6 @@ static void do_swap_page_50(struct page *page, struct vm_fault *vmf,
 		clear_bit(PG_unevictable, &page->flags);
 }
 
-static void do_swap_page_end_52(struct page *page, struct vm_fault *vmf,
-				swp_entry_t entry, struct mem_cgroup *memcg,
-				struct vm_area_struct *vma)
-{
-}
 // if PTE is not present (in swap space/disc) and the application free()s
 // it, the page fault handler is not invoked to avoid unnecesary swap
 // space disk. that is why cleaning magic bits in page fault handler only
@@ -172,12 +144,6 @@ static void mem_pattern_trace_3(int flags)
 
 	       );
 
-	// for use in miscellaneous experiments
-	if (flags & TRACE_MISC) {
-		fastswap_bench();
-		return;
-	}
-
 	if (flags & TRACE_START) {
 		mem_pattern_trace_start(flags);
 		return;
@@ -185,14 +151,6 @@ static void mem_pattern_trace_3(int flags)
 
 	if (flags & TRACE_END) {
 		mem_pattern_trace_end(flags);
-		return;
-	}
-	if (flags & KEVICTD_INIT) {
-		//kevictd_init();
-		return;
-	}
-	if (flags & KEVICTD_FINI) {
-		//kevictd_fini();
 		return;
 	}
 }
@@ -266,15 +224,7 @@ static int __init mem_pattern_trace_init(void)
 	debugfs_root = debugfs_create_dir("memtrace", NULL);
 #endif
 
-	if (strcmp(cmd, "fastswap") == 0) {
-		if (!val || (*val != '0' && *val != '1')) {
-			usage();
-			return 0;
-		}
-
-		*val == '1' ? static_branch_enable(&frontswap_enabled_key) :
-			      static_branch_disable(&frontswap_enabled_key);
-	} else if (strcmp(cmd, "one_tape") == 0) {
+	if (strcmp(cmd, "one_tape") == 0) {
 		if (!val || (*val != '0' && *val != '1')) {
 			usage();
 			return 0;
@@ -315,38 +265,6 @@ static int __init mem_pattern_trace_init(void)
 		}
 		*val == '1' ? memtrace_setflag(FASTSWAP_ASYNCWRITES) :
 			      memtrace_clearflag(FASTSWAP_ASYNCWRITES);
-	} else if (strcmp(cmd, "tape_fetch") == 0) {
-		if (!val || (*val != '0' && *val != '1')) {
-			usage();
-			return 0;
-		}
-
-		*val == '1' ? memtrace_setflag(TAPE_FETCH) :
-			      memtrace_clearflag(TAPE_FETCH);
-	} else if (strcmp(cmd, "offload_fetch") == 0) {
-		if (!val || (*val != '0' && *val != '1')) {
-			usage();
-			return 0;
-		}
-
-		*val == '1' ? memtrace_setflag(OFFLOAD_FETCH) :
-			      memtrace_clearflag(OFFLOAD_FETCH);
-	} else if (strcmp(cmd, "unevictable") == 0) {
-		if (!val || (*val != '0' && *val != '1')) {
-			usage();
-			return 0;
-		}
-
-		*val == '1' ? memtrace_setflag(MARK_UNEVICTABLE) :
-			      memtrace_clearflag(MARK_UNEVICTABLE);
-	} else if (strcmp(cmd, "lru_logs") == 0) {
-		if (!val || (*val != '0' && *val != '1')) {
-			usage();
-			return 0;
-		}
-
-		*val == '1' ? memtrace_setflag(LRU_LOGS) :
-			      memtrace_clearflag(LRU_LOGS);
 	} else {
 		usage();
 		return 0;

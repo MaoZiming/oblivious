@@ -54,7 +54,7 @@ static inline void stats_tell(struct stream_stats *s, const char *label) {
 
 struct trace_recording_state {
 	unsigned long *accesses;
-	unsigned long *timestamps;
+	unsigned long long *timestamps;
 	unsigned long pos;
 	struct file *f;
 

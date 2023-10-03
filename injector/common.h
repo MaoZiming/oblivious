@@ -11,12 +11,6 @@
 extern struct dentry *debugfs_root;
 #endif
 
-// atomic counter advanced by evict.c ONLY.
-// Used to synchronize lru related print
-// statements from different parts of the module
-// for coherent post processing
-extern atomic_t metronome;
-
 /* Copied from arch/x86/mm/fault.c. */
 /*
  * Page fault error code bits:
@@ -41,7 +35,6 @@ enum x86_pf_error_code {
 
 #define FILEPATH_LEN 256
 extern const char *RECORD_FILE_FMT;
-extern const char *FETCH_FILE_FMT;
 
 extern const unsigned long PAGE_ADDR_MASK;
 extern const unsigned long PRESENT_BIT_MASK;
@@ -50,17 +43,10 @@ extern const unsigned long SPECIAL_BIT_MASK;
 // N.B. does not take mmap_sem and the caller must take the semaphore
 // if need be
 pte_t *addr2pte(unsigned long addr, struct mm_struct *mm);
-pte_t *addr2ptepmd(unsigned long addr, struct mm_struct *mm, pmd_t **pmd_ret);
-bool proc_file_exists(const char *proc_name, const char *path_fmt, int tid);
-bool file_exists(const char *filepath);
-size_t file_size(const char *filepath);
 
 // does not return anything since we cannot take any action on fail
 struct file *open_trace(const char *filepath);
 void close_trace(struct file *f);
-void write_buffered_trace_to_file(struct file *f, const char *buf, const char *buf_time, long len);
-size_t read_tape(const char *filepath, char *buf, long max_len);
+void write_buffered_trace_to_file(struct file *f, const char *buf, const char *buf_time, long buf_len, long buf_time_len);
 
-void log_pfault(struct pt_regs *regs, unsigned long error_code,
-		unsigned long address, unsigned long pte_val);
 #endif /*COMMON_H*/
