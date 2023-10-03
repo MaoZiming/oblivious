@@ -219,11 +219,6 @@ static int __init mem_pattern_trace_init(void)
 		usage();
 		return -1;
 	}
-
-#if DEBUG_FS
-	debugfs_root = debugfs_create_dir("memtrace", NULL);
-#endif
-
 	if (strcmp(cmd, "one_tape") == 0) {
 		if (!val || (*val != '0' && *val != '1')) {
 			usage();
@@ -293,10 +288,6 @@ static void __exit mem_pattern_trace_exit(void)
 	printk(KERN_DEBUG "resetting injection points to noop");
 	for (i = 0; i < 100; i++)
 		set_pointer(i, kernel_noop);
-
-#if DEBUG_FS
-	debugfs_remove_recursive(debugfs_root);
-#endif
 }
 
 module_init(mem_pattern_trace_init);
